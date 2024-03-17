@@ -2,172 +2,174 @@ import sys
 import statistics
 import argparse
 import bisect
+
 from collections       import defaultdict
 from src.vcf.vcf_utils import VCFReader
 
+
 def main():
-  # Argument handling
-  args    = handle_args()
-  vcf_fp  = args['vcf']
-  sam_fp  = args['samples']
-  out_dir = args['data_directory']
-  win_siz = args['window_size']
-  win_num = args['num_windows']
-  admixed = args['admixed']
+    # Argument handling
+    args    = handle_args()
+    vcf_fp  = args['vcf']
+    sam_fp  = args['samples']
+    out_dir = args['data_directory']
+    win_siz = args['window_size']
+    win_num = args['num_windows']
+    admixed = args['admixed']
 
-  # Pop mapping if admixed VCF
-  if admixed:
-    pop_map = {}
-    pop_ctr = 0
+    # Pop mapping if admixed VCF
+    if admixed:
+        pop_map = {}
+        pop_ctr = 0
 
-  # Store positions of each SNP
-  positions = []
+    # Store positions of each SNP
+    positions = []
 
-  # Get haplotype data from VCF
-  vcf = VCFReader(vcf_fp)
+    # Get haplotype data from VCF
+    vcf = VCFReader(vcf_fp)
 
-  # Get sample list in VCF order
-  samples = vcf.get_samples()
-  snp_out = [[] for _ in range(len(samples) * 2)]
-  pos_out = []
-
-  if admixed:
-    anc_out =  [[] for _ in range(len(samples) * 2)]
-
-  snp_ctr = 0
-  for pos, haps in vcf:
-    if snp_ctr > win_num * win_siz:
-      break
-
-    for i, hs in enumerate(haps):
-      h0 = int(hs[0])
-      h1 = int(hs[2])
-
-      snp_out[i * 2].append(h0)
-      snp_out[(i * 2) + 1].append(h1)
-
-      if admixed:
-        pops = hs.split(':')[1].split(',')
-
-        if pops[0] not in pop_map:
-          pop_map[pops[0]] = pop_ctr
-          pop_ctr += 1
-
-        if pops[1] not in pop_map:
-          pop_map[pops[1]] = pop_ctr
-          pop_ctr += 1
-
-        anc_out[i * 2].append(pop_map[pops[0]])
-        anc_out[(i * 2) + 1].append(pop_map[pops[1]])
-
-    pos_out.append(pos)
-    positions.append(pos)
-
-    snp_ctr += 1
-
-  vcf.close()
-
-  # Write main SNP data
-  for idx in range(win_num):
-    slice_start = idx * win_siz
-    slice_end   = slice_start + win_siz
-
-    with open(f'{out_dir}/snp_{idx}.csv', 'w') as out_snp_f:
-      for haps in snp_out:
-        out_snp_f.write(f'{",".join(map(str, haps[slice_start:slice_end]))}\n')
+    # Get sample list in VCF order
+    samples = vcf.get_samples()
+    snp_out = [[] for _ in range(len(samples) * 2)]
+    pos_out = []
 
     if admixed:
-      with open(f'{out_dir}/anc_{idx}.csv', 'w') as out_anc_f:
-        for pops in anc_out:
-          out_anc_f.write(f'{",".join(map(str, pops[slice_start:slice_end]))}\n')
+        anc_out = [[] for _ in range(len(samples) * 2)]
 
-  with open(out_dir + '/pos.csv', 'w') as out_pos_f:
-    out_pos_f.write(f'{",".join(map(str, pos_out))}\n')
+    snp_ctr = 0
+    for pos, haps in vcf:
+        if snp_ctr > win_num * win_siz:
+            break
 
-  # Write window files
-  write_windows(out_dir, sam_fp, samples, win_siz, win_num,
-    len(snp_out[0]), positions, admixed)
+        for i, hs in enumerate(haps):
+            h0 = int(hs[0])
+            h1 = int(hs[2])
+
+            snp_out[i * 2].append(h0)
+            snp_out[(i * 2) + 1].append(h1)
+
+            if admixed:
+                pops = hs.split(':')[1].split(',')
+
+                if pops[0] not in pop_map:
+                    pop_map[pops[0]] = pop_ctr
+                    pop_ctr += 1
+
+                if pops[1] not in pop_map:
+                    pop_map[pops[1]] = pop_ctr
+                    pop_ctr += 1
+
+                anc_out[i * 2].append(pop_map[pops[0]])
+                anc_out[(i * 2) + 1].append(pop_map[pops[1]])
+
+        pos_out.append(pos)
+        positions.append(pos)
+
+        snp_ctr += 1
+
+    vcf.close()
+
+    # Write main SNP data
+    for idx in range(win_num):
+        slice_start = idx * win_siz
+        slice_end   = slice_start + win_siz
+
+        with open(f'{out_dir}/snp_{idx}.csv', 'w') as out_snp_f:
+            for haps in snp_out:
+                out_snp_f.write(f'{",".join(map(str, haps[slice_start:slice_end]))}\n')
+
+        if admixed:
+            with open(f'{out_dir}/anc_{idx}.csv', 'w') as out_anc_f:
+                for pops in anc_out:
+                    out_anc_f.write(f'{",".join(map(str, pops[slice_start:slice_end]))}\n')
+
+    with open(out_dir + '/pos.csv', 'w') as out_pos_f:
+        out_pos_f.write(f'{",".join(map(str, pos_out))}\n')
+
+    # Write window files
+    write_windows(out_dir, sam_fp, samples, win_siz, win_num,
+        len(snp_out[0]), positions, admixed)
 
 
 def generate_windows(inds, sam_pop_dic, snps, size, num, positions):
-  for ind_idx, ind in enumerate(inds):
-    ind_idx  *= 2
-    idx       = 0
+    for ind_idx, ind in enumerate(inds):
+        ind_idx *= 2
+        idx      = 0
 
-    if sam_pop_dic:
-      pop = sam_pop_dic[ind]
-    else:
-      pop = -1
+        if sam_pop_dic:
+            pop = sam_pop_dic[ind]
+        else:
+            pop = -1
 
-    generated = 0
+        generated = 0
 
-    while idx + size <= snps and generated != num:
-      yield (ind_idx,     idx, size, pop, generated)
-      yield (ind_idx + 1, idx, size, pop, generated)
+        while idx + size <= snps and generated != num:
+            yield (ind_idx,     idx, size, pop, generated)
+            yield (ind_idx + 1, idx, size, pop, generated)
 
-      idx       += size
-      generated += 1
+            idx       += size
+            generated += 1
 
 
 def write_windows(out_dir, sam_fp, samples, win_siz, win_num, max_snps,
-  positions, admixed):
-  # Get sample population data
-  if not admixed:
-    sam_pop_dic = get_sample_pop_dic(sam_fp)
-  else:
-    sam_pop_dic = None
+    positions, admixed):
+    # Get sample population data
+    if not admixed:
+        sam_pop_dic = get_sample_pop_dic(sam_fp)
+    else:
+        sam_pop_dic = None
 
-  # Write standard window data
-  win_fos = [open(out_dir + f'win_{i}.csv', 'w') for i in range(win_num)]
-  for i, (ind, idx, size, pop, w_idx) in enumerate(generate_windows(
-      samples, sam_pop_dic, max_snps, win_siz, win_num, positions)):
-    win_fos[w_idx].write(f'{i},{ind},{idx},{size},{pop}\n')
-  for fo in win_fos:
-    fo.close()
+    # Write standard window data
+    win_fos = [open(out_dir + f'win_{i}.csv', 'w') for i in range(win_num)]
+    for i, (ind, idx, size, pop, w_idx) in enumerate(generate_windows(
+        samples, sam_pop_dic, max_snps, win_siz, win_num, positions)):
+        win_fos[w_idx].write(f'{i},{ind},{idx},{size},{pop}\n')
+    for fo in win_fos:
+        fo.close()
 
 
 def get_sample_pop_dic(sam_fp):
-  ret_dic = {}
-  pop_dic = {}
-  pop_ctr = 0
+    ret_dic = {}
+    pop_dic = {}
+    pop_ctr = 0
 
-  with open(sam_fp, 'r') as sam_f:
-    for line in sam_f:
-      toks = line.split()
-      sam  = toks[0]
-      pop  = toks[1]
+    with open(sam_fp, 'r') as sam_f:
+        for line in sam_f:
+        toks = line.split()
+        sam  = toks[0]
+        pop  = toks[1]
 
-      if pop not in pop_dic:
-        pop_dic[pop] = pop_ctr
-        pop_ctr += 1
+        if pop not in pop_dic:
+            pop_dic[pop] = pop_ctr
+            pop_ctr += 1
 
-      ret_dic[sam] = pop_dic[pop]
+        ret_dic[sam] = pop_dic[pop]
 
-  return ret_dic
+    return ret_dic
 
 
 def handle_args():
-  parser = argparse.ArgumentParser(description='VCF Preprocessing.')
+    parser = argparse.ArgumentParser(description='VCF Preprocessing.')
 
-  parser.add_argument('-v','--vcf',
-    help='VCF file without preprocessing', required=True, type=str)
+    parser.add_argument('-v','--vcf',
+        help='VCF file without preprocessing', required=True, type=str)
 
-  group = parser.add_mutually_exclusive_group(required=True)
-  group.add_argument('-a', '--admixed',
-    help='VCF is an admixed VCF generated by simgenotype',
-    action=argparse.BooleanOptionalAction)
-  group.add_argument('-s','--samples',
-    help='Sample information', type=str)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-a', '--admixed',
+        help='VCF is an admixed VCF generated by simgenotype',
+        action=argparse.BooleanOptionalAction)
+    group.add_argument('-s','--samples',
+        help='Sample information', type=str)
 
-  parser.add_argument('-d','--data-directory',
-    help='Output directory', required=True, type=str)
-  parser.add_argument('-w','--window-size',
-    help='Window size (in SNPs)', default=1024, type=int)
-  parser.add_argument('-n','--num-windows',
-    help='Max number of window files to generate', default=20, type=int)
+    parser.add_argument('-d','--data-directory',
+        help='Output directory', required=True, type=str)
+    parser.add_argument('-w','--window-size',
+        help='Window size (in SNPs)', default=1024, type=int)
+    parser.add_argument('-n','--num-windows',
+        help='Max number of window files to generate', default=20, type=int)
 
-  return vars(parser.parse_args())
+    return vars(parser.parse_args())
 
 
 if __name__ == "__main__":
-  main()
+    main()
