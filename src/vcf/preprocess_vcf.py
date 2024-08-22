@@ -19,7 +19,7 @@ def main():
 
     # Pop mapping if admixed VCF
     if admixed:
-        pop_map = {}
+        pop_map = {'AFR': 0, 'EUR': 1, 'EAS': 2}
         pop_ctr = 0
 
     # Store positions of each SNP
@@ -50,14 +50,6 @@ def main():
 
             if admixed:
                 pops = hs.split(':')[1].split(',')
-
-                if pops[0] not in pop_map:
-                    pop_map[pops[0]] = pop_ctr
-                    pop_ctr += 1
-
-                if pops[1] not in pop_map:
-                    pop_map[pops[1]] = pop_ctr
-                    pop_ctr += 1
 
                 anc_out[i * 2].append(pop_map[pops[0]])
                 anc_out[(i * 2) + 1].append(pop_map[pops[1]])
@@ -135,15 +127,15 @@ def get_sample_pop_dic(sam_fp):
 
     with open(sam_fp, 'r') as sam_f:
         for line in sam_f:
-        toks = line.split()
-        sam  = toks[0]
-        pop  = toks[1]
+            toks = line.split()
+            sam  = toks[0]
+            pop  = toks[1]
 
-        if pop not in pop_dic:
-            pop_dic[pop] = pop_ctr
-            pop_ctr += 1
+            if pop not in pop_dic:
+                pop_dic[pop] = pop_ctr
+                pop_ctr += 1
 
-        ret_dic[sam] = pop_dic[pop]
+            ret_dic[sam] = pop_dic[pop]
 
     return ret_dic
 

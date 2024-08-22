@@ -4,8 +4,9 @@ import time
 import os
 import torch.nn as nn
 import torch.optim as optim
-import src.model.data_management as data_management
-from src.model.model import BLSTM, Multilayer, Transformer, CNN, UNet
+import src.smoother.data_management as data_management
+from src.smoother.model import CNNSmoother
+
 
 def main():
     start_t = time.time()
@@ -14,60 +15,23 @@ def main():
 
     # Argument handling
     args        = handle_args()
-    v_ratio     = args['valid']
+    data_dir    = args['data_directory']
     num_classes = args['classes']
     batch_size  = args['batch']
     learning_r  = args['learn']
     epochs      = args['epochs']
-    model_type  = args['model']
     optim_type  = args['optimizer']
     save_dir    = args['save_directory']
-    win_index   = args['window_index']
-    preprocess  = args['preprocess']
-
-    # Augmentation arguments
-    aug_strs      = ['daf', 'ref', 'pri']
-    augmentations = [x for x in aug_strs if args[x]]
-    gaussian      = args['gaussian']
-
-    # Preprocess data if needed
-    if args['rawdata']:
-        fp       = args['rawdata']
-        data_dir = os.path.dirname(fp)
-
-        print('Preprocessing data...')
-        data_management.preprocess_data(fp, data_dir, win_index, v_ratio, augmentations)
-        elapsed_t = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_t))
-        print(f'Done with data preprocessing, elapsed time = {elapsed_t}.')
-
-        if preprocess:
-            return
-    else:
-        data_dir = args['data_directory']
 
     # Data loaders
-    train_fn = f'win_{win_index}_train.csv'
-    valid_fn = f'win_{win_index}_valid.csv'
-
-    print('Creating data loaders...')
-    train_dl, valid_dl, window_size = data_management.create_training_loaders(
-        data_dir, train_fn, valid_fn, win_index, batch_size=batch_size, augs=augmentations)
+    train_dl, valid_dl = data_management.create_training_loaders(data_dir, batch_size=batch_size)
     elapsed_t = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_t))
     print(f'Done creating data loaders, elapsed time = {elapsed_t}.')
 
     # Set model to train
-    model_type = model_type.lower()
-    model_str = f'{model_type}_{win_index}_{learning_r:.0e}_{optim_type}'
-    if model_type == 'transformer':
-        model = Transformer(window_size, device, num_classes=num_classes)
-    elif model_type == 'blstm':
-        model = BLSTM(window_size, num_classes=num_classes)
-    elif model_type == 'multilayer' or model_type == 'mlp':
-        model = Multilayer(window_size, num_classes=num_classes)
-    elif model_type == 'cnn':
-        model = CNN(num_classes=num_classes)
-    elif model_type == 'unet':
-        model = UNet(num_classes=num_classes)
+    model_type = 'cnn_smoother'
+    model_str = f'{model_type}_{learning_r:.0e}_{optim_type}'
+    model = CNNSmoother(num_classes=num_classes)
 
     model = model.to(device)
     if optim_type == 'adamw':
@@ -78,12 +42,11 @@ def main():
     # Run training loop
     print(f'Training... ({model_str=})')
     start_t = time.time()
-    train(model, optimizer, train_dl, valid_dl, len(train_dl) // 2, save_dir, device, window_size,
-          epochs, start_t=start_t, model_id=model_str, gaussian=gaussian)
+    train(model, optimizer, train_dl, valid_dl, len(train_dl) // 2, save_dir, device,
+          epochs, start_t=start_t, model_id=model_str)
 
-def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, window_size, epochs=20,
-          criterion=nn.CrossEntropyLoss(), best_valid_loss=float('Inf'), start_t=time.time(),
-          model_id='model', gaussian=False):
+def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, epochs=20,
+          criterion=nn.CrossEntropyLoss(), best_valid_loss=float('Inf'), start_t=time.time(), model_id='x'):
     running_loss       = 0.0
     valid_running_loss = 0.0
     global_step        = 0
@@ -93,16 +56,13 @@ def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, windo
 
     model.train()
     for epoch in range(epochs):
-        for (labels, snp, aug) in train_i:
+        for (labels, probs, cms) in train_i:
             labels = labels.to(device)
-            snp    = snp.to(device)
-            aug    = aug.to(device)
-
-            if gaussian:
-                snp += torch.normal(0, 0.1, size=snp.shape).to(device)
+            probs  = probs.to(device)
+            cms    = cms.to(device)
 
             optimizer.zero_grad()
-            output = model(snp, aug)
+            output = model(probs, cms)
             loss   = criterion(output, labels)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
@@ -116,12 +76,12 @@ def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, windo
                 model.eval()
                 with torch.no_grad():
                     # Validation
-                    for (labels, snp, aug) in valid_i:
+                    for (labels, probs, cms) in valid_i:
                         labels = labels.to(device)
-                        snp    = snp.to(device)
-                        aug    = aug.to(device)
+                        probs  = probs.to(device)
+                        cms    = cms.to(device)
 
-                        output = model(snp, aug)
+                        output = model(probs, cms)
                         loss   = criterion(output, labels)
                         valid_running_loss += loss.item()
 
@@ -154,12 +114,8 @@ def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, windo
 def handle_args():
     parser = argparse.ArgumentParser(description='Model training.')
     data_group = parser.add_mutually_exclusive_group(required=True)
-    data_group.add_argument('-r','--rawdata',
-        help='Raw window CSV without preprocessing', type=str)
     data_group.add_argument('-d','--data-directory',
         help='Directory with preprocessed CSV files', type=str)
-    parser.add_argument('-v','--valid',
-        help='Validation ratio', default=0.10, type=float)
     parser.add_argument('-c','--classes',
         help='Number of classes to predict', required=True, type=int)
     parser.add_argument('-b','--batch',
@@ -168,37 +124,22 @@ def handle_args():
         help='Epochs to train for', default=70, type=int)
     parser.add_argument('-l','--learn',
         help='Learning rate', default=1e-5, type=float)
-    parser.add_argument('-m','--model',
-        help='Model type', required=True, type=str)
     parser.add_argument('-o','--optimizer',
         help='Optimizer type', required=True, type=str, choices=['adamw', 'sgd'])
     parser.add_argument('-s','--save-directory',
         help='Location to save trained model', default='.', type=str)
-    parser.add_argument('-w','--window-index',
-        help='Window index this model will train for', required=True, type=str)
-    parser.add_argument('--preprocess',
-        help='Only do preprocessing step', action=argparse.BooleanOptionalAction)
-    parser.add_argument('--daf',
-        help='Add DAF augmentation', action=argparse.BooleanOptionalAction)
-    parser.add_argument('--ref',
-        help='Add population reference sequence augmentation', action=argparse.BooleanOptionalAction)
-    parser.add_argument('--pri',
-        help='Add private SNPs augmentation', action=argparse.BooleanOptionalAction)
-    parser.add_argument('--gaussian',
-        help='Add Gaussian noise augmentation', action=argparse.BooleanOptionalAction)
 
     return vars(parser.parse_args())
 
 
 def welcome():
     print(r'''
-     _____  _____   ___   _____  _   _  _____  _   _   ___   _____  _____  _____
-    |_   _|| ___ \ / _ \ |_   _|| \ | ||_   _|| \ | | / _ \ |_   _||  _  || ___ \
-      | |  | |_/ // /_\ \  | |  |  \| |  | |  |  \| |/ /_\ \  | |  | | | || |_/ /
-      | |  |    / |  _  |  | |  | . ` |  | |  | . ` ||  _  |  | |  | | | ||    /
-      | |  | |\ \ | | | | _| |_ | |\  | _| |_ | |\  || | | |  | |  \ \_/ /| |\ \
-      \_/  \_| \_\\_| |_/ \___/ \_| \_/ \___/ \_| \_/\_| |_/  \_/   \___/ \_| \_\
-
+       _____ __  __  ____   ____ _______ _    _ _____ _   _       _______ ____  _____
+      / ____|  \/  |/ __ \ / __ \__   __| |  | |_   _| \ | |   /\|__   __/ __ \|  __ \
+     | (___ | \  / | |  | | |  | | | |  | |__| | | | |  \| |  /  \  | | | |  | | |__) |
+      \___ \| |\/| | |  | | |  | | | |  |  __  | | | | . ` | / /\ \ | | | |  | |  _  /
+      ____) | |  | | |__| | |__| | | |  | |  | |_| |_| |\  |/ ____ \| | | |__| | | \ \
+     |_____/|_|  |_|\____/ \____/  |_|  |_|  |_|_____|_| \_/_/    \_\_|  \____/|_|  \_\
     ''')
 
 

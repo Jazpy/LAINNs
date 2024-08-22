@@ -2,7 +2,7 @@ import sys
 import msprime
 import demes
 
-graph = demes.load('m6-All-admixture.yml')
+graph = demes.load(sys.argv[1])
 demography = msprime.Demography.from_demes(graph)
 
 sample_dic = {}
@@ -36,7 +36,7 @@ for ind in ind_ids:
     sam_pop_test_tab.write(f'{ind}\t{toks[0]}\n')
     sam_test.write(f'{ind}\n')
 
-rate_map = msprime.RateMap.read_hapmap(sys.argv[1], sequence_length=10000000)
+rate_map = msprime.RateMap.read_hapmap(sys.argv[2], sequence_length=10000000)
 
 trees = msprime.sim_ancestry(sample_dic, sequence_length=10_000_000,
   ploidy=2, demography=demography, recombination_rate=rate_map)

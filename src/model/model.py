@@ -3,6 +3,7 @@ import math
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, DataParallel
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from torch.nn.functional import relu
 
 
 #######
@@ -13,11 +14,11 @@ class Multilayer(nn.Module):
     def __init__(self, in_size, num_classes=3):
         super(Multilayer, self).__init__()
 
-        in_size += 6
+        #in_size += (in_size * num_classes)
 
         self.num_classes = num_classes
-        growth  = 4
-        dropout = 0.3
+        growth  = 3
+        dropout = 0.4
 
         self.layers = nn.Sequential(
         nn.Linear(in_size,          in_size * growth), nn.ReLU(),
@@ -30,9 +31,105 @@ class Multilayer(nn.Module):
 
 
     def forward(self, snp, aug):
-        input    = torch.cat((snp, aug), dim=1)
-        pop_pred = self.layers(input)
-        return pop_pred
+        if aug.nelement() != 0:
+            aug   = torch.flatten(aug, start_dim=1)
+            snp = torch.cat((snp, aug), dim=1)
+
+        return self.layers(snp)
+
+
+########
+# UNET #
+########
+
+class UNet(nn.Module):
+    def __init__(self, num_classes=3):
+        super(UNet, self).__init__()
+
+        self.num_classes = num_classes
+        self.kernel_size = 3
+        self.pool_k_size = 2
+
+        self.e00 = nn.Conv1d(1,   16,  kernel_size=self.kernel_size, padding=1)
+        self.e01 = nn.Conv1d(16,  16,  kernel_size=self.kernel_size, padding=1)
+        self.p0  = nn.MaxPool1d(kernel_size=self.pool_k_size, stride=2)
+        self.e10 = nn.Conv1d(16,  32,  kernel_size=self.kernel_size, padding=1)
+        self.e11 = nn.Conv1d(32,  32,  kernel_size=self.kernel_size, padding=1)
+        self.p1  = nn.MaxPool1d(kernel_size=self.pool_k_size, stride=2)
+        self.e20 = nn.Conv1d(32,  64,  kernel_size=self.kernel_size, padding=1)
+        self.e21 = nn.Conv1d(64,  64,  kernel_size=self.kernel_size, padding=1)
+        self.p2  = nn.MaxPool1d(kernel_size=self.pool_k_size, stride=2)
+        self.e30 = nn.Conv1d(64,  128, kernel_size=self.kernel_size, padding=1)
+        self.e31 = nn.Conv1d(128, 128, kernel_size=self.kernel_size, padding=1)
+        self.p3  = nn.MaxPool1d(kernel_size=self.pool_k_size, stride=2)
+        self.e40 = nn.Conv1d(128, 256, kernel_size=self.kernel_size, padding=1)
+        self.e41 = nn.Conv1d(256, 256, kernel_size=self.kernel_size, padding=1)
+
+        self.u0  = nn.ConvTranspose1d(256, 128, kernel_size=self.pool_k_size, stride=2)
+        self.d00 = nn.Conv1d(256, 128, kernel_size=self.kernel_size, padding=1)
+        self.d01 = nn.Conv1d(128, 128, kernel_size=self.kernel_size, padding=1)
+        self.u1  = nn.ConvTranspose1d(128, 64, kernel_size=self.pool_k_size, stride=2)
+        self.d10 = nn.Conv1d(128, 64, kernel_size=self.kernel_size, padding=1)
+        self.d11 = nn.Conv1d(64,  64, kernel_size=self.kernel_size, padding=1)
+        self.u2  = nn.ConvTranspose1d(64,  32, kernel_size=self.pool_k_size, stride=2)
+        self.d20 = nn.Conv1d(64,  32, kernel_size=self.kernel_size, padding=1)
+        self.d21 = nn.Conv1d(32,  32, kernel_size=self.kernel_size, padding=1)
+        self.u3  = nn.ConvTranspose1d(32, 16, kernel_size=self.pool_k_size, stride=2)
+        self.d30 = nn.Conv1d(32,  16, kernel_size=self.kernel_size, padding=1)
+        self.d31 = nn.Conv1d(16,  16, kernel_size=self.kernel_size, padding=1)
+        self.oc  = nn.Conv1d(16,  self.num_classes, kernel_size=1)
+
+
+    def forward(self, snp, aug):
+        snp = torch.unsqueeze(snp, 1)
+
+        if aug.nelement() != 0:
+            snp = torch.cat((snp, aug), dim=1)
+
+        xe00 = relu(self.e00(snp))
+        xe01 = relu(self.e01(xe00))
+        xp0 = self.p0(xe01)
+
+        xe10 = relu(self.e10(xp0))
+        xe11 = relu(self.e11(xe10))
+        xp1 = self.p1(xe11)
+
+        xe20 = relu(self.e20(xp1))
+        xe21 = relu(self.e21(xe20))
+        xp2 = self.p2(xe21)
+
+        xe30 = relu(self.e30(xp2))
+        xe31 = relu(self.e31(xe30))
+        xp3 = self.p3(xe31)
+
+        xe40 = relu(self.e40(xp3))
+        xe41 = relu(self.e41(xe40))
+
+        # Decoder
+        xu0 = self.u0(xe41)
+        xu00 = torch.cat([xu0, xe31], dim=1)
+        xd00 = relu(self.d00(xu00))
+        xd01 = relu(self.d01(xd00))
+
+        xu1 = self.u1(xd01)
+        xu11 = torch.cat([xu1, xe21], dim=1)
+        xd10 = relu(self.d10(xu11))
+        xd11 = relu(self.d11(xd10))
+
+        xu2 = self.u2(xd11)
+        xu22 = torch.cat([xu2, xe11], dim=1)
+        xd20 = relu(self.d20(xu22))
+        xd21 = relu(self.d21(xd20))
+
+        xu3 = self.u3(xd21)
+        xu33 = torch.cat([xu3, xe01], dim=1)
+        xd30 = relu(self.d30(xu33))
+        xd31 = relu(self.d31(xd30))
+
+        # Output layer
+        out = self.oc(xd31)
+
+        return out
 
 
 #######
@@ -40,42 +137,46 @@ class Multilayer(nn.Module):
 #######
 
 class CNN(nn.Module):
-    def __init__(self, in_size, num_classes=3):
+    def __init__(self, num_classes=3):
         super(CNN, self).__init__()
 
-        self.num_features = in_size
-        self.num_classes  = num_classes
-        kern = 2
-        dropout = 0.35
+        self.num_classes = num_classes
+        self.kernel_size = 3
+        self.pool_k_size = 3
+        dropout = 0.25
+        activation = nn.ReLU()
 
         self.conv = nn.Sequential(
-        nn.Conv1d(in_channels=1, out_channels=64, kernel_size=3), nn.BatchNorm1d(64), nn.ReLU(),
-        nn.Conv1d(in_channels=64, out_channels=64, kernel_size=3), nn.BatchNorm1d(64), nn.ReLU(),
-        nn.AvgPool1d(kernel_size=3),
-        nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3), nn.BatchNorm1d(128), nn.ReLU(),
-        nn.Conv1d(in_channels=128, out_channels=128, kernel_size=3), nn.BatchNorm1d(128), nn.ReLU(),
-        nn.AvgPool1d(kernel_size=3),
-        nn.Conv1d(in_channels=128, out_channels=256, kernel_size=3), nn.BatchNorm1d(256), nn.ReLU(),
-        nn.Conv1d(in_channels=256, out_channels=256, kernel_size=3), nn.BatchNorm1d(256), nn.ReLU(),
-        nn.AvgPool1d(kernel_size=3),
-        nn.Conv1d(in_channels=256, out_channels=512, kernel_size=3), nn.BatchNorm1d(512), nn.ReLU(),
-        nn.Conv1d(in_channels=512, out_channels=512, kernel_size=3), nn.BatchNorm1d(512), nn.ReLU(),
-        nn.AvgPool1d(kernel_size=3))
+        nn.Conv1d(in_channels=1,   out_channels=16,  kernel_size=self.kernel_size), nn.BatchNorm1d(16),  activation,
+        nn.Conv1d(in_channels=16,  out_channels=16,  kernel_size=self.kernel_size), nn.BatchNorm1d(16),  activation,
+        nn.AvgPool1d(kernel_size=self.pool_k_size),
+        nn.Conv1d(in_channels=16,  out_channels=32,  kernel_size=self.kernel_size), nn.BatchNorm1d(32),  activation,
+        nn.Conv1d(in_channels=32,  out_channels=32,  kernel_size=self.kernel_size), nn.BatchNorm1d(32),  activation,
+        nn.AvgPool1d(kernel_size=self.pool_k_size),
+        nn.Conv1d(in_channels=32,  out_channels=64,  kernel_size=self.kernel_size), nn.BatchNorm1d(64),  activation,
+        nn.Conv1d(in_channels=64,  out_channels=64,  kernel_size=self.kernel_size), nn.BatchNorm1d(64),  activation,
+        nn.AvgPool1d(kernel_size=self.pool_k_size),
+        nn.Conv1d(in_channels=64,  out_channels=128, kernel_size=self.kernel_size), nn.BatchNorm1d(128), activation,
+        nn.Conv1d(in_channels=128, out_channels=128, kernel_size=self.kernel_size), nn.BatchNorm1d(128), activation,
+        nn.AvgPool1d(kernel_size=self.pool_k_size))
 
+        fc_size = 1280
         self.fc = nn.Sequential(
         nn.Dropout(dropout),
-        nn.Linear(5120, 5120), nn.ReLU(),
+        nn.Linear(fc_size, fc_size), nn.ReLU(),
         nn.Dropout(dropout),
-        nn.Linear(5120, 5120), nn.ReLU(),
+        nn.Linear(fc_size, fc_size), nn.ReLU(),
         nn.Dropout(dropout),
-        nn.Linear(5120, self.num_classes))
+        nn.Linear(fc_size, self.num_classes))
 
 
-    def forward(self, snp):
-        src = torch.unsqueeze(snp, dim=-1)
-        src = torch.permute(src, (0, 2, 1))
+    def forward(self, snp, aug):
+        snp = torch.unsqueeze(snp, 1)
 
-        out = self.conv(src)
+        if aug.nelement() != 0:
+            snp = torch.cat((snp, aug), dim=1)
+
+        out = self.conv(snp)
         out = out.reshape(out.size(0), -1)
         out = self.fc(out)
 
@@ -109,7 +210,7 @@ class BLSTM(nn.Module):
         nn.Linear(2024,                 self.num_classes))
 
 
-    def forward(self, snp):
+    def forward(self, snp, aug):
         output, _ = self.lstm(snp)
         pop_pred  = self.multilayer(output)
 
@@ -147,7 +248,7 @@ class Transformer(nn.Module):
         self.decoder_1.weight.data.uniform_(-initrange, initrange)
 
 
-    def forward(self, snp):
+    def forward(self, snp, aug):
         src = torch.permute(snp, (1, 0))
         src = torch.unsqueeze(src, dim=-1)
         src = self.pos_encoder(src)
@@ -164,7 +265,7 @@ class Transformer(nn.Module):
 
 
     class __PositionalEncoding(nn.Module):
-        def __init__(self, d_model, max_len=2048):
+        def __init__(self, d_model, max_len=3000):
             super().__init__()
             self.dropout = nn.Dropout()
 

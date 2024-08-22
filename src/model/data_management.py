@@ -16,13 +16,64 @@ from torch.utils.data        import Dataset, DataLoader
 
 
 def write_daf(windows, snps, data_dir, idx):
-    freqs = defaultdict(lambda: [0, 0])
-    for w in windows:
-        freqs[w[4]][0] += sum(snps[w[1]])
-        freqs[w[4]][1] += w[3]
+    pop_map = {}
+    for i, w in enumerate(windows):
+        pop_map[i] = w[4]
+
+    dafs = defaultdict(list)
+    for site in range(snps.shape[1]):
+        freqs = defaultdict(lambda: [0, 0])
+        for i, ind in enumerate(snps[:, site]):
+            freqs[pop_map[i]][0] += 1 if ind != 0 else 0
+            freqs[pop_map[i]][1] += 1
+        for key, val in freqs.items():
+            dafs[key].append(str(val[0] / val[1]))
 
     with open(f'{data_dir}/aug_daf_{idx}.csv', 'w') as out_f:
-        out_f.write(','.join(str(l[0] / l[1]) for _, l in freqs.items()))
+        for k, l in dafs.items():
+            out_f.write(f'{",".join(l)}\n')
+
+
+def write_ref(windows, snps, data_dir, idx):
+    pop_map = {}
+    for i, w in enumerate(windows):
+        pop_map[i] = w[4]
+
+    refs = defaultdict(list)
+    for site in range(snps.shape[1]):
+        counts = defaultdict(lambda: [0, 0, 0, 0])
+        for i, ind in enumerate(snps[:, site]):
+            counts[pop_map[i]][ind] += 1
+        for key, val in counts.items():
+            refs[key].append(str(val.index(max(val))))
+
+    with open(f'{data_dir}/aug_ref_{idx}.csv', 'w') as out_f:
+        for k, l in refs.items():
+            out_f.write(f'{",".join(l)}\n')
+
+
+def write_pri(windows, snps, data_dir, idx):
+    pop_set = set()
+    pop_map = {}
+    for i, w in enumerate(windows):
+        pop_map[i] = w[4]
+        pop_set.add(w[4])
+    num_pop = len(pop_set)
+
+    privs = defaultdict(list)
+    for site in range(snps.shape[1]):
+        counts = [0 for _ in range(num_pop)]
+        for i, ind in enumerate(snps[:, site]):
+            counts[pop_map[i]] += ind
+        for i in range(num_pop):
+            privs[i].append('0')
+        indices = [i for i, x in enumerate(counts) if x > 0]
+        if len(indices) == 1 and counts[indices[0]] > 3:
+            privs[indices[0]][-1] = '1'
+
+    with open(f'{data_dir}/aug_pri_{idx}.csv', 'w') as out_f:
+        for k, l in privs.items():
+            out_f.write(f'{",".join(l)}\n')
 
 
 # I never asked for this
@@ -32,6 +83,10 @@ def handle_augs(augmentations, windows, data_dir, idx):
     for aug in augmentations:
         if aug == 'daf':
             write_daf(windows, snps, data_dir, idx)
+        elif aug == 'ref':
+            write_ref(windows, snps, data_dir, idx)
+        elif aug == 'pri':
+            write_pri(windows, snps, data_dir, idx)
         else:
             pass
 
@@ -81,7 +136,12 @@ class SNPDataset(Dataset):
         if 'daf' in self.augs:
             self.pop_dafs = pd.read_csv(f'{os.path.dirname(win_fp)}/aug_daf_{idx}.csv',
                 header=None).to_numpy(dtype=np.float32)
-            self.row_dafs = [np.mean(row) for row in SNPDataset.df_snp]
+        if 'ref' in self.augs:
+            self.pop_refs = pd.read_csv(f'{os.path.dirname(win_fp)}/aug_ref_{idx}.csv',
+                header=None).to_numpy(dtype=np.float32)
+        if 'pri' in self.augs:
+            self.pop_pris = pd.read_csv(f'{os.path.dirname(win_fp)}/aug_pri_{idx}.csv',
+                header=None).to_numpy(dtype=np.float32)
 
         self.transform        = transform
         self.target_transform = target_transform
@@ -101,10 +161,22 @@ class SNPDataset(Dataset):
         else:
             lab = SNPDataset.anc_lst[ind_idx]
 
-        if 'daf' in self.augs:
-            aug = np.append(self.pop_dafs, self.row_dafs[ind_idx])
+        #lab = np.full((1000), lab)
 
-        return lab, snp, aug
+        aug = None
+        if 'daf' in self.augs:
+            aug = self.pop_dafs if aug is None else np.concatenate((aug, self.pop_dafs))
+        if 'ref' in self.augs:
+            aug = self.pop_refs if aug is None else np.concatenate((aug, self.pop_refs))
+        if 'pri' in self.augs:
+            snp = np.copy(snp)
+            snp *= -1
+            non_zero = np.nonzero(self.pop_pris)
+            for row, col in zip(non_zero[0], non_zero[1]):
+                snp[col] = row + 1
+
+        return lab, snp, aug if aug is not None else np.zeros(0)
+        return lab[:800], snp[:800], aug if aug is not None else np.zeros(0)
 
 
 def create_training_loaders(data_dir, train_fn, valid_fn, idx, batch_size=32, augs=None):
@@ -113,22 +185,19 @@ def create_training_loaders(data_dir, train_fn, valid_fn, idx, batch_size=32, au
     valid_ds = SNPDataset(f'{data_dir}/{valid_fn}', idx, augs=augs)
     assert train_ds.w_size == valid_ds.w_size
 
-    train_dl = DataLoader(train_ds, batch_size=batch_size,
-        drop_last=False, shuffle=True)
-    valid_dl = DataLoader(valid_ds, batch_size=batch_size,
-        drop_last=False, shuffle=True)
+    train_dl = DataLoader(train_ds, batch_size=batch_size, drop_last=False, shuffle=True)
+    valid_dl = DataLoader(valid_ds, batch_size=batch_size, drop_last=False, shuffle=True)
 
     return train_dl, valid_dl, train_ds.w_size
 
 
-def create_testing_loader(data_dir, test_fn, idx, admixed=False, batch_size=32):
+def create_testing_loader(data_dir, test_fn, idx, admixed=False, batch_size=32, augs=None):
     SNPDataset.read_snp_data(f'{data_dir}/snp_{idx}.csv')
     if admixed:
         SNPDataset.read_anc_data(f'{data_dir}/anc_{idx}.csv')
-    test_ds = SNPDataset(f'{data_dir}/{test_fn}', admixed=admixed)
+    test_ds = SNPDataset(f'{data_dir}/{test_fn}', idx, admixed=admixed, augs=augs)
 
-    test_dl = DataLoader(test_ds, batch_size=batch_size,
-        drop_last=False, shuffle=False)
+    test_dl = DataLoader(test_ds, batch_size=batch_size, drop_last=False, shuffle=False)
 
     return test_dl, test_ds.w_size
 

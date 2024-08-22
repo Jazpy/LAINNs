@@ -13,8 +13,6 @@ from statistics import mode
 from sklearn.metrics import confusion_matrix
 from sklearn.utils.extmath import weighted_mode
 from src.model.model import BLSTM, Multilayer, Transformer, CNN
-from src.smoother.model import CNNSmoother
-from src.smoother.data_management import create_testing_loader as smooth_loader
 
 
 def main():
@@ -35,8 +33,6 @@ def main():
     num_classes  = args['classes']
     start_window = args['start_window']
     num_windows  = args['windows']
-    smoother     = args['smoother']
-    files        = args['files']
 
     # Augmentation arguments
     aug_strs      = ['daf', 'ref', 'pri']
@@ -48,58 +44,52 @@ def main():
     lai_true = []
     raw_prob = []
 
-    if files:
-        for win_index in range(start_window, start_window + num_windows):
-            # Data loading
-            test_fn = f'win_{win_index}.csv'
+    for win_index in range(start_window, start_window + num_windows):
+        # Data loading
+        test_fn = f'win_{win_index}.csv'
 
-            print(f'Creating data loader for {win_index=}...')
-            test_dl, window_size = data_management.create_testing_loader(
-            data_dir, test_fn, win_index, admixed=admixed, batch_size=64, augs=augmentations)
-            elapsed_t = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_t))
-            print(f'Done creating data loader, elapsed time = {elapsed_t}.')
+        print(f'Creating data loader for {win_index=}...')
+        test_dl, window_size = data_management.create_testing_loader(
+        data_dir, test_fn, win_index, admixed=admixed, batch_size=64, augs=augmentations)
+        elapsed_t = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_t))
+        print(f'Done creating data loader, elapsed time = {elapsed_t}.')
 
-            # Model loading
-            model_type = model_type.lower()
-            model_id = f'{model_type}_{win_index}_{learning:.0e}_{optimizer}'
-            model_fp = os.path.join(model_dir, model_type, f'{model_id}_model.pt')
+        # Model loading
+        model_type = model_type.lower()
+        model_id = f'{model_type}_{win_index}_{learning:.0e}_{optimizer}'
+        model_fp = os.path.join(model_dir, model_type, f'{model_id}_model.pt')
 
-            if model_type == 'transformer':
-                model = Transformer(window_size, device, num_classes=num_classes)
-            elif model_type == 'blstm':
-                model = BLSTM(window_size, num_classes=num_classes)
-            elif model_type == 'multilayer' or model_type == 'mlp':
-                model = Multilayer(window_size, num_classes=num_classes)
-            elif model_type == 'cnn':
-                model = CNN(num_classes)
-            model = model.to(device)
+        if model_type == 'transformer':
+            model = Transformer(window_size, device, num_classes=num_classes)
+        elif model_type == 'blstm':
+            model = BLSTM(window_size, num_classes=num_classes)
+        elif model_type == 'multilayer' or model_type == 'mlp':
+            model = Multilayer(window_size, num_classes=num_classes)
+        elif model_type == 'cnn':
+            model = CNN(num_classes)
+        model = model.to(device)
 
-            # Plot loss progress
-            if plot_loss:
-                plot_metrics_loss(plot_loss, f'{model_id}_loss.png', device)
+        # Plot loss progress
+        if plot_loss:
+            plot_metrics_loss(plot_loss, f'{model_id}_loss.png', device)
 
-            # Run evaluation
-            data_management.load_checkpoint(model_fp, model, device)
-            print(f'Testing... ({model_fp=})')
-            evaluate(model, test_dl, device, lai_pred, lai_true, lai_prob, raw_prob)
-            elapsed_t = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_t))
-            print(f'Done testing, elapsed time = {elapsed_t}.')
+        # Run evaluation
+        data_management.load_checkpoint(model_fp, model, device)
+        print(f'Testing... ({model_fp=})')
+        evaluate(model, test_dl, device, lai_pred, lai_true, lai_prob, raw_prob)
+        elapsed_t = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_t))
+        print(f'Done testing, elapsed time = {elapsed_t}.')
 
-        lai_pred = np.array(lai_pred)
-        lai_true = np.array(lai_true)
-        lai_prob = np.array(lai_prob)
-        raw_prob = np.array(raw_prob)
+    lai_pred = np.array(lai_pred)
+    lai_true = np.array(lai_true)
+    lai_prob = np.array(lai_prob)
+    raw_prob = np.array(raw_prob)
 
-        # Save intermediate results for training
-        np.save(f'{data_dir}/train_probabilities.npy', raw_prob[:, :raw_prob.shape[1] // 2, :])
-        np.save(f'{data_dir}/test_probabilities.npy',  raw_prob[:, raw_prob.shape[1] // 2:, :])
-        np.save(f'{data_dir}/train_truths.npy', lai_true[:, :lai_true.shape[1] // 2])
-        np.save(f'{data_dir}/test_truths.npy',  lai_true[:, lai_true.shape[1] // 2:])
+    # Save intermediate results for training
+    np.save('probabilities.npy', raw_prob)
+    np.save('truths.npy', lai_true)
 
-    if smoother == 'simple' or files:
-        lai_pred, lai_true = simple_smooth(lai_pred, lai_true, lai_prob, kernel_radius=10)
-    elif smoother == 'cnn':
-        lai_pred, lai_true = cnn_smooth(data_dir, model_dir, device)
+    lai_pred, lai_true = simple_smooth(lai_pred, lai_true, lai_prob, kernel_radius=10)
 
     # Plot LAI confusion matrix
     if plot_conf:
@@ -119,37 +109,6 @@ def main():
 
     for key, val in acc_dic.items():
         print(f'Overall LAI Acc for population {key} = {sum(val) / len(val) * 100}%')
-
-
-def cnn_smooth(data_dir, model_dir, device):
-    smooth_pred = []
-    smooth_true = []
-    test_dl = smooth_loader(data_dir)
-
-    model_id = f'cnn_smoother_5e-04_adamw'
-    model_fp = os.path.join(model_dir, 'cnn_smoother', f'{model_id}_model.pt')
-
-    model = CNNSmoother()
-    model = model.to(device)
-    data_management.load_checkpoint(model_fp, model, device)
-
-    model.eval()
-    with torch.no_grad():
-        for (labels, probs, cms) in test_dl:
-            labels = labels.to(device)
-            probs  = probs.to(device)
-            cms    = cms.to(device)
-
-            output = model(probs, cms)
-
-            # LAI results
-            smooth_probs = nn.Softmax(dim=1)(output).tolist()
-            smooth_class = np.argmax(smooth_probs, axis=1).tolist()
-            for preds, truths in zip(smooth_class, labels.tolist()):
-                smooth_pred.extend(preds)
-                smooth_true.extend(truths)
-
-    return smooth_pred, smooth_true
 
 
 def simple_smooth(pred_mat, truth_mat, probs_mat, kernel_radius=2):
@@ -243,10 +202,6 @@ def handle_args():
         help='Add population reference sequence augmentation', action=argparse.BooleanOptionalAction)
     parser.add_argument('--pri',
         help='Add private SNPs augmentation', action=argparse.BooleanOptionalAction)
-    parser.add_argument('--smoother', required=False,
-        help='Smoother to use', default='simple', type=str)
-    parser.add_argument('--files',
-        help='Write files', action=argparse.BooleanOptionalAction)
 
     return vars(parser.parse_args())
 
