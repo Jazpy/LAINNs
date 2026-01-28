@@ -1,9 +1,12 @@
-import torch
-import argparse
+import sys
 import time
 import os
+
+import argparse
+import torch
 import torch.nn as nn
 import torch.optim as optim
+
 import src.model.data_management as data_management
 from src.model.model import BLSTM, Multilayer, Transformer, CNN, UNet
 
@@ -26,9 +29,12 @@ def main():
     preprocess  = args['preprocess']
 
     # Augmentation arguments
-    aug_strs      = ['daf', 'ref', 'pri']
+    aug_strs      = ['pri']
     augmentations = [x for x in aug_strs if args[x]]
     gaussian      = args['gaussian']
+    num_channels  = 1
+    if 'pri' in augmentations:
+        num_channels += num_classes
 
     # Preprocess data if needed
     if args['rawdata']:
@@ -63,9 +69,9 @@ def main():
     elif model_type == 'blstm':
         model = BLSTM(window_size, num_classes=num_classes)
     elif model_type == 'multilayer' or model_type == 'mlp':
-        model = Multilayer(window_size, num_classes=num_classes)
+        model = Multilayer(window_size, num_channels, num_classes=num_classes)
     elif model_type == 'cnn':
-        model = CNN(num_classes=num_classes)
+        model = CNN(window_size, num_channels, num_classes=num_classes)
     elif model_type == 'unet':
         model = UNet(num_classes=num_classes)
 
@@ -78,22 +84,27 @@ def main():
     # Run training loop
     print(f'Training... ({model_str=})')
     start_t = time.time()
-    train(model, optimizer, train_dl, valid_dl, len(train_dl) // 2, save_dir, device, window_size,
-          epochs, start_t=start_t, model_id=model_str, gaussian=gaussian)
+    wrote = train(model, optimizer, train_dl, valid_dl, len(train_dl) // 2, save_dir, device, window_size,
+        epochs, start_t=start_t, model_id=model_str, gaussian=gaussian)
+
+    if not wrote:
+        main()
 
 def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, window_size, epochs=20,
-          criterion=nn.CrossEntropyLoss(), best_valid_loss=float('Inf'), start_t=time.time(),
-          model_id='model', gaussian=False):
+          start_t=time.time(), model_id='model', gaussian=False):
+    criterion          = nn.CrossEntropyLoss()
     running_loss       = 0.0
     valid_running_loss = 0.0
     global_step        = 0
+    best_valid_loss    = float('Inf')
     train_loss_list    = []
     valid_loss_list    = []
     global_steps_list  = []
+    wrote = False
 
     model.train()
     for epoch in range(epochs):
-        for (labels, snp, aug) in train_i:
+        for (labels, snp, aug, _) in train_i:
             labels = labels.to(device)
             snp    = snp.to(device)
             aug    = aug.to(device)
@@ -116,7 +127,7 @@ def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, windo
                 model.eval()
                 with torch.no_grad():
                     # Validation
-                    for (labels, snp, aug) in valid_i:
+                    for (labels, snp, aug, _) in valid_i:
                         labels = labels.to(device)
                         snp    = snp.to(device)
                         aug    = aug.to(device)
@@ -137,18 +148,20 @@ def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, windo
 
                 # Save checkpoint
                 if best_valid_loss > avg_valid_loss:
-                    elapsed_t = time.strftime('%H:%M:%S',
-                        time.gmtime(time.time() - start_t))
-                print((f'epoch [{epoch + 1}/{epochs}],\t'
-                    f'step [{global_step}/{epochs * len(train_i)}],\t'
-                    f'training loss = {avg_train_loss:.3f},\t'
-                    f'validation loss = {avg_valid_loss:.3f},\t'
-                    f'elapsed time = {elapsed_t}'))
-                best_valid_loss = avg_valid_loss
-                data_management.save_checkpoint(f'{save_dir}/{model_id}_model.pt',
-                    model, optimizer, best_valid_loss)
+                    best_valid_loss = avg_valid_loss
+                    data_management.save_checkpoint(f'{save_dir}/{model_id}_model.pt',
+                        model, optimizer, best_valid_loss)
+                    wrote = True
+                    elapsed_t = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_t))
+                    print((f'epoch [{epoch + 1}/{epochs}],\t'
+                        f'step [{global_step}/{epochs * len(train_i)}],\t'
+                        f'training loss = {avg_train_loss:.3f},\t'
+                        f'validation loss = {avg_valid_loss:.3f},\t'
+                        f'elapsed time = {elapsed_t}'))
                 data_management.save_metrics(f'{save_dir}/{model_id}_metrics.pt',
                     train_loss_list, valid_loss_list, global_steps_list)
+
+    return wrote
 
 
 def handle_args():
@@ -178,10 +191,6 @@ def handle_args():
         help='Window index this model will train for', required=True, type=str)
     parser.add_argument('--preprocess',
         help='Only do preprocessing step', action=argparse.BooleanOptionalAction)
-    parser.add_argument('--daf',
-        help='Add DAF augmentation', action=argparse.BooleanOptionalAction)
-    parser.add_argument('--ref',
-        help='Add population reference sequence augmentation', action=argparse.BooleanOptionalAction)
     parser.add_argument('--pri',
         help='Add private SNPs augmentation', action=argparse.BooleanOptionalAction)
     parser.add_argument('--gaussian',
@@ -200,6 +209,7 @@ def welcome():
       \_/  \_| \_\\_| |_/ \___/ \_| \_/ \___/ \_| \_/\_| |_/  \_/   \___/ \_| \_\
 
     ''')
+    print(' '.join(sys.argv))
 
 
 if __name__ == '__main__':

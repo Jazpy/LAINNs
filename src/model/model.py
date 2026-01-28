@@ -11,14 +11,14 @@ from torch.nn.functional import relu
 #######
 
 class Multilayer(nn.Module):
-    def __init__(self, in_size, num_classes=3):
+    def __init__(self, in_size, channels, num_classes=3):
         super(Multilayer, self).__init__()
 
-        #in_size += (in_size * num_classes)
+        in_size *= channels
 
         self.num_classes = num_classes
-        growth  = 3
-        dropout = 0.4
+        growth  = 2
+        dropout = 0.1
 
         self.layers = nn.Sequential(
         nn.Linear(in_size,          in_size * growth), nn.ReLU(),
@@ -32,7 +32,7 @@ class Multilayer(nn.Module):
 
     def forward(self, snp, aug):
         if aug.nelement() != 0:
-            aug   = torch.flatten(aug, start_dim=1)
+            aug = torch.flatten(aug, start_dim=1)
             snp = torch.cat((snp, aug), dim=1)
 
         return self.layers(snp)
@@ -137,35 +137,36 @@ class UNet(nn.Module):
 #######
 
 class CNN(nn.Module):
-    def __init__(self, num_classes=3):
+    def __init__(self, in_size, channels, num_classes=3):
         super(CNN, self).__init__()
 
         self.num_classes = num_classes
         self.kernel_size = 3
         self.pool_k_size = 3
-        dropout = 0.25
+        dropout = 0.1
         activation = nn.ReLU()
 
         self.conv = nn.Sequential(
-        nn.Conv1d(in_channels=1,   out_channels=16,  kernel_size=self.kernel_size), nn.BatchNorm1d(16),  activation,
-        nn.Conv1d(in_channels=16,  out_channels=16,  kernel_size=self.kernel_size), nn.BatchNorm1d(16),  activation,
+        nn.Conv1d(in_channels=channels, out_channels=8, kernel_size=self.kernel_size), nn.BatchNorm1d(8), activation, nn.Dropout1d(p=dropout),
+        nn.Conv1d(in_channels=8, out_channels=8, kernel_size=self.kernel_size), nn.BatchNorm1d(8), activation, nn.Dropout1d(p=dropout),
         nn.AvgPool1d(kernel_size=self.pool_k_size),
-        nn.Conv1d(in_channels=16,  out_channels=32,  kernel_size=self.kernel_size), nn.BatchNorm1d(32),  activation,
-        nn.Conv1d(in_channels=32,  out_channels=32,  kernel_size=self.kernel_size), nn.BatchNorm1d(32),  activation,
+        nn.Conv1d(in_channels=8, out_channels=16, kernel_size=self.kernel_size), nn.BatchNorm1d(16), activation, nn.Dropout1d(p=dropout),
+        nn.Conv1d(in_channels=16, out_channels=16, kernel_size=self.kernel_size), nn.BatchNorm1d(16), activation, nn.Dropout1d(p=dropout),
         nn.AvgPool1d(kernel_size=self.pool_k_size),
-        nn.Conv1d(in_channels=32,  out_channels=64,  kernel_size=self.kernel_size), nn.BatchNorm1d(64),  activation,
-        nn.Conv1d(in_channels=64,  out_channels=64,  kernel_size=self.kernel_size), nn.BatchNorm1d(64),  activation,
+        nn.Conv1d(in_channels=16, out_channels=32, kernel_size=self.kernel_size), nn.BatchNorm1d(32), activation, nn.Dropout1d(p=dropout),
+        nn.Conv1d(in_channels=32, out_channels=32, kernel_size=self.kernel_size), nn.BatchNorm1d(32), activation, nn.Dropout1d(p=dropout),
         nn.AvgPool1d(kernel_size=self.pool_k_size),
-        nn.Conv1d(in_channels=64,  out_channels=128, kernel_size=self.kernel_size), nn.BatchNorm1d(128), activation,
-        nn.Conv1d(in_channels=128, out_channels=128, kernel_size=self.kernel_size), nn.BatchNorm1d(128), activation,
+        nn.Conv1d(in_channels=32, out_channels=64, kernel_size=self.kernel_size), nn.BatchNorm1d(64), activation, nn.Dropout1d(p=dropout),
+        nn.Conv1d(in_channels=64, out_channels=64, kernel_size=self.kernel_size), nn.BatchNorm1d(64), activation, nn.Dropout1d(p=dropout),
         nn.AvgPool1d(kernel_size=self.pool_k_size))
 
-        fc_size = 1280
+        fc_size = self.conv(torch.empty(1, channels, in_size))
+        fc_size = fc_size.reshape(fc_size.size(0), -1).shape[1]
         self.fc = nn.Sequential(
         nn.Dropout(dropout),
-        nn.Linear(fc_size, fc_size), nn.ReLU(),
+        nn.Linear(fc_size, fc_size), activation,
         nn.Dropout(dropout),
-        nn.Linear(fc_size, fc_size), nn.ReLU(),
+        nn.Linear(fc_size, fc_size), activation,
         nn.Dropout(dropout),
         nn.Linear(fc_size, self.num_classes))
 
@@ -202,11 +203,11 @@ class BLSTM(nn.Module):
 
         self.multilayer = nn.Sequential(
         nn.Linear(self.hidden_size * 2, 2024), nn.ReLU(),
-        #nn.Dropout(dropout),
+        nn.Dropout(dropout),
         nn.Linear(2024,                 2024), nn.ReLU(),
-        #nn.Dropout(dropout),
+        nn.Dropout(dropout),
         nn.Linear(2024,                 2024), nn.ReLU(),
-        #nn.Dropout(dropout),
+        nn.Dropout(dropout),
         nn.Linear(2024,                 self.num_classes))
 
 

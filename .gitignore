@@ -2,6 +2,8 @@
 bkup/
 logs/
 utility/
+scripts/
+plots/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

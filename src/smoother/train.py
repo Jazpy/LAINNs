@@ -42,7 +42,7 @@ def main():
     # Run training loop
     print(f'Training... ({model_str=})')
     start_t = time.time()
-    train(model, optimizer, train_dl, valid_dl, len(train_dl) // 2, save_dir, device,
+    train(model, optimizer, train_dl, valid_dl, len(train_dl) // 1, save_dir, device,
           epochs, start_t=start_t, model_id=model_str)
 
 def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, epochs=20,
@@ -99,15 +99,15 @@ def train(model, optimizer, train_i, valid_i, eval_step, save_dir, device, epoch
                 if best_valid_loss > avg_valid_loss:
                     elapsed_t = time.strftime('%H:%M:%S',
                         time.gmtime(time.time() - start_t))
-                print((f'epoch [{epoch + 1}/{epochs}],\t'
-                    f'step [{global_step}/{epochs * len(train_i)}],\t'
-                    f'training loss = {avg_train_loss:.3f},\t'
-                    f'validation loss = {avg_valid_loss:.3f},\t'
-                    f'elapsed time = {elapsed_t}'))
-                best_valid_loss = avg_valid_loss
-                data_management.save_checkpoint(f'{save_dir}/{model_id}_model.pt',
-                    model, optimizer, best_valid_loss)
-                data_management.save_metrics(f'{save_dir}/{model_id}_metrics.pt',
+                    print((f'epoch [{epoch + 1}/{epochs}],\t'
+                        f'step [{global_step}/{epochs * len(train_i)}],\t'
+                        f'training loss = {avg_train_loss:.3f},\t'
+                        f'validation loss = {avg_valid_loss:.3f},\t'
+                        f'elapsed time = {elapsed_t}'))
+                    best_valid_loss = avg_valid_loss
+                    data_management.save_checkpoint(f'{save_dir}/smoother_model.pt',
+                        model, optimizer, best_valid_loss)
+                data_management.save_metrics(f'{save_dir}/smoother_metrics.pt',
                     train_loss_list, valid_loss_list, global_steps_list)
 
 

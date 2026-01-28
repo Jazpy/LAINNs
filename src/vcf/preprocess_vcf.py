@@ -20,6 +20,8 @@ def main():
     # Pop mapping if admixed VCF
     if admixed:
         pop_map = {'AFR': 0, 'EUR': 1, 'EAS': 2}
+        #pop_map = {'FIN': 0, 'GBR': 1, 'TSI': 2}
+        #pop_map = {'MXB': 0, 'MXL': 1, 'CLM': 2, 'PEL': 3, 'PUR': 4}
         pop_ctr = 0
 
     # Store positions of each SNP

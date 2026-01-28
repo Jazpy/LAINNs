@@ -18,13 +18,13 @@ class CNNSmoother(nn.Module):
 
         self.e00 = nn.Conv1d(num_classes + 1,   16,  kernel_size=self.kernel_size, padding=1)
         self.e01 = nn.Conv1d(16,  16,  kernel_size=self.kernel_size, padding=1)
-        self.p0  = nn.MaxPool1d(kernel_size=self.pool_k_size, stride=2)
+        self.p0  = nn.AvgPool1d(kernel_size=self.pool_k_size, stride=2)
         self.e10 = nn.Conv1d(16,  32,  kernel_size=self.kernel_size, padding=1)
         self.e11 = nn.Conv1d(32,  32,  kernel_size=self.kernel_size, padding=1)
-        self.p1  = nn.MaxPool1d(kernel_size=self.pool_k_size, stride=2)
+        self.p1  = nn.AvgPool1d(kernel_size=self.pool_k_size, stride=2)
         self.e20 = nn.Conv1d(32,  64,  kernel_size=self.kernel_size, padding=1)
         self.e21 = nn.Conv1d(64,  64,  kernel_size=self.kernel_size, padding=1)
-        self.p2  = nn.MaxPool1d(kernel_size=self.pool_k_size, stride=2)
+        self.p2  = nn.AvgPool1d(kernel_size=self.pool_k_size, stride=2)
         self.e30 = nn.Conv1d(64,  128, kernel_size=self.kernel_size, padding=1)
         self.e31 = nn.Conv1d(128, 128, kernel_size=self.kernel_size, padding=1)
 

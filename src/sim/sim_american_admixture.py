@@ -8,7 +8,7 @@ demography = msprime.Demography.from_demes(graph)
 sample_dic = {}
 ind_ids    = []
 pops = ['MXB', 'MXL', 'CLM', 'PEL', 'PUR']
-inds = 1000
+inds = 500
 
 for pop in pops:
   sample_dic[pop] = inds
@@ -27,7 +27,7 @@ sam_test = open('test_samples.txt', 'w')
 for ind in ind_ids:
   toks = ind.split('_')
 
-  if int(toks[1]) < inds - 200:
+  if int(toks[1]) < inds * .90:
     sam_pop_train.write(f'{ind} {toks[0]}\n')
     sam_pop_train_tab.write(f'{ind}\t{toks[0]}\n')
     sam_train.write(f'{ind}\n')
@@ -43,4 +43,4 @@ trees = msprime.sim_ancestry(sample_dic, sequence_length=10_000_000,
 trees = msprime.sim_mutations(trees, rate=2e-08)
 
 with open('sim.vcf', 'w') as out_f:
-  trees.write_vcf(out_f, contig_id='sim', individual_names=ind_ids)
+  trees.write_vcf(out_f, contig_id='1', individual_names=ind_ids)

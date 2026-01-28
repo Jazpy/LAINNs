@@ -15,43 +15,6 @@ from torch.utils.data        import Dataset, DataLoader
 ######################
 
 
-def write_daf(windows, snps, data_dir, idx):
-    pop_map = {}
-    for i, w in enumerate(windows):
-        pop_map[i] = w[4]
-
-    dafs = defaultdict(list)
-    for site in range(snps.shape[1]):
-        freqs = defaultdict(lambda: [0, 0])
-        for i, ind in enumerate(snps[:, site]):
-            freqs[pop_map[i]][0] += 1 if ind != 0 else 0
-            freqs[pop_map[i]][1] += 1
-        for key, val in freqs.items():
-            dafs[key].append(str(val[0] / val[1]))
-
-    with open(f'{data_dir}/aug_daf_{idx}.csv', 'w') as out_f:
-        for k, l in dafs.items():
-            out_f.write(f'{",".join(l)}\n')
-
-
-def write_ref(windows, snps, data_dir, idx):
-    pop_map = {}
-    for i, w in enumerate(windows):
-        pop_map[i] = w[4]
-
-    refs = defaultdict(list)
-    for site in range(snps.shape[1]):
-        counts = defaultdict(lambda: [0, 0, 0, 0])
-        for i, ind in enumerate(snps[:, site]):
-            counts[pop_map[i]][ind] += 1
-        for key, val in counts.items():
-            refs[key].append(str(val.index(max(val))))
-
-    with open(f'{data_dir}/aug_ref_{idx}.csv', 'w') as out_f:
-        for k, l in refs.items():
-            out_f.write(f'{",".join(l)}\n')
-
-
 def write_pri(windows, snps, data_dir, idx):
     pop_set = set()
     pop_map = {}
@@ -65,11 +28,16 @@ def write_pri(windows, snps, data_dir, idx):
         counts = [0 for _ in range(num_pop)]
         for i, ind in enumerate(snps[:, site]):
             counts[pop_map[i]] += ind
-        for i in range(num_pop):
-            privs[i].append('0')
         indices = [i for i, x in enumerate(counts) if x > 0]
-        if len(indices) == 1 and counts[indices[0]] > 3:
-            privs[indices[0]][-1] = '1'
+        if len(indices) == 1:# and counts[indices[0]] > 3:
+            for key in range(num_pop):
+                if key == indices[0]:
+                    privs[key].append('1')
+                else:
+                    privs[key].append('0')
+        else:
+            for key in range(num_pop):
+                privs[key].append('0')
 
     with open(f'{data_dir}/aug_pri_{idx}.csv', 'w') as out_f:
         for k, l in privs.items():
@@ -81,11 +49,7 @@ def handle_augs(augmentations, windows, data_dir, idx):
     snps = pd.read_csv(f'{data_dir}/snp_{idx}.csv', header=None, dtype=int).to_numpy(dtype=int)
 
     for aug in augmentations:
-        if aug == 'daf':
-            write_daf(windows, snps, data_dir, idx)
-        elif aug == 'ref':
-            write_ref(windows, snps, data_dir, idx)
-        elif aug == 'pri':
+        if aug == 'pri':
             write_pri(windows, snps, data_dir, idx)
         else:
             pass
@@ -133,12 +97,6 @@ class SNPDataset(Dataset):
         self.admixed = admixed
 
         self.augs = augs or []
-        if 'daf' in self.augs:
-            self.pop_dafs = pd.read_csv(f'{os.path.dirname(win_fp)}/aug_daf_{idx}.csv',
-                header=None).to_numpy(dtype=np.float32)
-        if 'ref' in self.augs:
-            self.pop_refs = pd.read_csv(f'{os.path.dirname(win_fp)}/aug_ref_{idx}.csv',
-                header=None).to_numpy(dtype=np.float32)
         if 'pri' in self.augs:
             self.pop_pris = pd.read_csv(f'{os.path.dirname(win_fp)}/aug_pri_{idx}.csv',
                 header=None).to_numpy(dtype=np.float32)
@@ -161,22 +119,11 @@ class SNPDataset(Dataset):
         else:
             lab = SNPDataset.anc_lst[ind_idx]
 
-        #lab = np.full((1000), lab)
-
         aug = None
-        if 'daf' in self.augs:
-            aug = self.pop_dafs if aug is None else np.concatenate((aug, self.pop_dafs))
-        if 'ref' in self.augs:
-            aug = self.pop_refs if aug is None else np.concatenate((aug, self.pop_refs))
         if 'pri' in self.augs:
-            snp = np.copy(snp)
-            snp *= -1
-            non_zero = np.nonzero(self.pop_pris)
-            for row, col in zip(non_zero[0], non_zero[1]):
-                snp[col] = row + 1
+            aug = self.pop_pris if aug is None else np.concatenate((aug, self.pop_pris))
 
-        return lab, snp, aug if aug is not None else np.zeros(0)
-        return lab[:800], snp[:800], aug if aug is not None else np.zeros(0)
+        return lab, snp, aug if aug is not None else np.zeros(0), ind_idx
 
 
 def create_training_loaders(data_dir, train_fn, valid_fn, idx, batch_size=32, augs=None):
